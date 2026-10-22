@@ -55,7 +55,16 @@ def page_visualization() -> None:
     st.subheader("\u5e73\u5747\u539a\u5ea6\u8da8\u52e2")
     if {"Timestamp", "Thick_Mean_um"}.issubset(data.columns):
         trend = data[["Timestamp", "Thick_Mean_um"]].dropna().sort_values("Timestamp")
-        st.line_chart(trend, x="Timestamp", y="Thick_Mean_um", use_container_width=True)
+        trend = trend.rename(columns={
+            "Timestamp": "\u6642\u9593",
+            "Thick_Mean_um": "\u5e73\u5747\u539a\u5ea6 (\u00b5m)",
+        })
+        st.line_chart(
+            trend,
+            x="\u6642\u9593",
+            y="\u5e73\u5747\u539a\u5ea6 (\u00b5m)",
+            use_container_width=True,
+        )
     else:
         st.info("\u8cc7\u6599\u7f3a\u5c11 Timestamp \u6216 Thick_Mean_um\uff0c\u7121\u6cd5\u986f\u793a\u539a\u5ea6\u8da8\u52e2\u3002")
 
@@ -94,11 +103,16 @@ def page_visualization() -> None:
         if "Is_Anomaly" in data.columns:
             scatter_cols.append("Is_Anomaly")
         scatter = data[scatter_cols].apply(pd.to_numeric, errors="coerce").dropna()
+        scatter = scatter.rename(columns={
+            "Current_ASD": "\u96fb\u6d41\u5bc6\u5ea6 (A/dm\u00b2)",
+            "Thick_Mean_um": "\u5e73\u5747\u539a\u5ea6 (\u00b5m)",
+            "Is_Anomaly": "\u7570\u5e38\u6a19\u8a18",
+        })
         st.scatter_chart(
             scatter,
-            x="Current_ASD",
-            y="Thick_Mean_um",
-            color="Is_Anomaly" if "Is_Anomaly" in scatter.columns else None,
+            x="\u96fb\u6d41\u5bc6\u5ea6 (A/dm\u00b2)",
+            y="\u5e73\u5747\u539a\u5ea6 (\u00b5m)",
+            color="\u7570\u5e38\u6a19\u8a18" if "\u7570\u5e38\u6a19\u8a18" in scatter.columns else None,
             use_container_width=True,
         )
     else:
@@ -114,7 +128,19 @@ def page_visualization() -> None:
         if col in data.columns
     ]
     if summary_cols:
-        st.dataframe(data[summary_cols].describe().T, use_container_width=True)
+        parameter_labels = {
+            "Line_Speed_mpm": "\u7dda\u901f (m/min)",
+            "Current_ASD": "\u96fb\u6d41\u5bc6\u5ea6 (A/dm\u00b2)",
+            "Bath_Temp_C": "\u69fd\u6db2\u6eab\u5ea6 (\u00b0C)",
+            "Cu_Conc_gL": "\u9285\u96e2\u5b50\u6fc3\u5ea6 (g/L)",
+            "Additive_ppm": "\u6dfb\u52a0\u5291 (ppm)",
+            "Jet_Pressure_bar": "\u5674\u6d41\u58d3\u529b (bar)",
+            "Edge_Current_Bias": "\u908a\u7de3\u96fb\u6d41\u504f\u5dee",
+            "Thick_Mean_um": "\u5e73\u5747\u539a\u5ea6 (\u00b5m)",
+            "Thick_Range_um": "\u539a\u5ea6\u7bc4\u570d (\u00b5m)",
+        }
+        summary = data[summary_cols].describe().T.rename(index=parameter_labels)
+        st.dataframe(summary, use_container_width=True)
 
 
 def page_prediction() -> None:
@@ -159,6 +185,25 @@ def page_prediction() -> None:
         if col not in time_fields and col not in shift_columns
     ]
 
+    parameter_defaults = {}
+    for feature in process_fields:
+        low, high, default = -1_000_000.0, 1_000_000.0, 0.0
+        if reference is not None and feature in reference.columns:
+            numeric = pd.to_numeric(reference[feature], errors="coerce").dropna()
+            if not numeric.empty:
+                low, high = float(numeric.min()), float(numeric.max())
+                default = float(numeric.median())
+        if high <= low:
+            high = low + 1.0
+        parameter_defaults[feature] = (low, high, float(np.clip(default, low, high)))
+
+    st.subheader("\u88fd\u7a0b\u53c3\u6578\u9810\u8a2d\u503c")
+    defaults_table = pd.DataFrame([
+        {"\u88fd\u7a0b\u53c3\u6578": process_labels.get(feature, feature), "\u9810\u8a2d\u503c": parameter_defaults[feature][2]}
+        for feature in process_fields
+    ])
+    st.dataframe(defaults_table, hide_index=True, use_container_width=True)
+    st.caption("\u4ee5\u4e0a\u9810\u8a2d\u503c\u540c\u6a23\u586b\u5165\u4e0b\u65b9\u8868\u55ae\u7684\u8f38\u5165\u6846\u3002")
     st.info("\u8acb\u8f38\u5165\u88fd\u7a0b\u53c3\u6578\u4e26\u9078\u64c7\u6642\u9593\u8207\u73ed\u5225\u3002\u9810\u6e2c\u7d50\u679c\u4f9b\u5206\u6790\u53c3\u8003\uff0c\u5be6\u969b\u88fd\u7a0b\u5224\u5b9a\u4ecd\u61c9\u642d\u914d\u73fe\u5834\u898f\u7bc4\u3002")
     with st.form("prediction_form"):
         st.subheader("\u88fd\u7a0b\u53c3\u6578")
@@ -166,21 +211,13 @@ def page_prediction() -> None:
         controls = st.columns(2)
         for index, feature in enumerate(process_fields):
             label = process_labels.get(feature, feature)
-            default = 0.0
-            low, high = -1_000_000.0, 1_000_000.0
-            if reference is not None and feature in reference.columns:
-                numeric = pd.to_numeric(reference[feature], errors="coerce").dropna()
-                if not numeric.empty:
-                    low, high = float(numeric.min()), float(numeric.max())
-                    default = float(numeric.median())
-            if high <= low:
-                high = low + 1.0
+            low, high, default = parameter_defaults[feature]
             with controls[index % 2]:
                 values[feature] = st.number_input(
                     label,
                     min_value=float(low),
                     max_value=float(high),
-                    value=float(np.clip(default, low, high)),
+                    value=default,
                     step=0.01,
                     format="%.3f",
                     help=f"\u8a13\u7df4\u8cc7\u6599\u89c0\u6e2c\u7bc4\u570d\uff1a{low:.3f} \u81f3 {high:.3f}",
